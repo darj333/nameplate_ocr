@@ -147,7 +147,7 @@ def _process_pdf(nameplate: Nameplate, db: Session) -> None:
             continue
 
         for table in tables:
-            title = table["title"].strip()
+            title = table["title"]
             if not title:
                 logger.info("[%d] Page %d: skipping untitled table", nameplate.id, page_num)
                 continue
