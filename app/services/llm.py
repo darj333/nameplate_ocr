@@ -40,7 +40,7 @@ Return ONLY valid JSON — no markdown fences, no commentary — in exactly this
 {
   "tables": [
     {
-      "title": "<see title rules below>",
+      "title": "<heading text — see rules below>",
       "rows": [
         {"<column header 1>": "<cell value>", "<column header 2>": "<cell value>", ...},
         ...
@@ -49,21 +49,32 @@ Return ONLY valid JSON — no markdown fences, no commentary — in exactly this
   ]
 }
 
-Title rules (IMPORTANT — read carefully):
-- Look for ANY text that appears ABOVE the table or acts as its heading. This includes:
-  underlined text, bold text, ALL-CAPS text, alphanumeric codes (e.g. "ANTEMĂSURĂTOARE TE403",
-  "LISTA ECHIPAMENTE", "TABLOU TE-01"), section headings, or any label identifying the table.
-- Copy that heading text EXACTLY as it appears on the page.
-- Only use an empty string "" if the page truly has no text above or near the table at all.
+Title rules:
+- Look for ANY text that appears ABOVE the table: underlined text, bold text, ALL-CAPS text,
+  alphanumeric codes (e.g. "ANTEMĂSURĂTOARE TE403", "LISTA ECHIPAMENTE", "TABLOU TE-01").
+- Copy that heading text EXACTLY as it appears on the page (preserve diacritics, spacing).
+- Only use an empty string "" if there is truly NO text outside the table grid itself.
 
 Data rules:
-- Preserve all column header names exactly as they appear (including Romanian or other languages).
-- Preserve all cell values exactly as written, including special characters and diacritics.
+- Preserve all column header names exactly as they appear (including diacritics).
+- Preserve all cell values exactly as written.
 - Where a cell says "Idem" (meaning "same as above"), replace it with the full text from the \
 most recent non-Idem cell in that same column.
-- Omit a key from a row object if that cell is empty.
+- Omit a key from a row object only if that cell is completely empty.
 - Do not skip any data rows.
 - If a column contains only row numbers (e.g. 1, 2, 3…) use "Nr. Crt." as the column name.
+"""
+
+_TITLE_PROMPT = """\
+Look at this document page. There is a table on the page.
+
+What is the heading or title written ABOVE the table?
+It is often underlined, in capital letters, or contains an alphanumeric code \
+(for example: "ANTEMĂSURĂTOARE TE403", "LISTA ECHIPAMENTE", "TABLOU ELECTRIC T1").
+
+Reply with ONLY the heading text, exactly as it appears on the page.
+Do not add any explanation, punctuation, or quotes around it.
+If there is truly no heading text above the table, reply with exactly: NONE
 """
 
 
@@ -169,19 +180,33 @@ def structure_with_llm(image_path: str | Path) -> tuple[list[dict[str, str]], st
     return cleaned, raw
 
 
+def _fetch_page_title(data_url: str) -> str:
+    """
+    Make a focused second call to ask only for the page heading above the table.
+    Returns the title string, or "" if none is found.
+    """
+    raw = _vision_completion(data_url, _TITLE_PROMPT, max_tokens=128)
+    title = raw.strip().strip('"').strip("'")
+    if title.upper() == "NONE" or not title:
+        return ""
+    return title
+
+
 def extract_tables_from_pdf_page(
     image_bytes: bytes, mime: str = "image/png"
 ) -> tuple[list[dict], str]:
     """
-    Send a rendered PDF page (as PNG bytes) to the Groq vision model using the
-    table-extraction prompt.
+    Send a rendered PDF page (as PNG bytes) to the Groq vision model.
+
+    Pass 1 — extract tables + titles in one call.
+    Pass 2 — if any table came back with an empty title, make a second focused
+              call asking only for the heading text and apply it to those tables.
 
     Returns:
         tables   – list of {"title": str, "rows": [dict, ...]}
-        raw_text – the model's full raw response (for debugging)
+        raw_text – the pass-1 model response (for debugging)
     """
     data_url = _bytes_to_data_url(image_bytes, mime)
-    # Use a higher token limit — tables can have many rows
     raw = _vision_completion(data_url, _TABLE_PROMPT, max_tokens=4096)
     data = _extract_json(raw)
 
@@ -195,9 +220,17 @@ def extract_tables_from_pdf_page(
         rows = tbl.get("rows", [])
         if not isinstance(rows, list):
             continue
-        # Filter out completely empty rows
         clean_rows = [r for r in rows if isinstance(r, dict) and any(str(v).strip() for v in r.values())]
         if clean_rows:
             validated.append({"title": title, "rows": clean_rows})
+
+    # Pass 2: recover missing titles with a dedicated focused call
+    missing = [t for t in validated if not t["title"]]
+    if missing:
+        logger.info("Pass-2 title fetch for %d untitled table(s) on this page", len(missing))
+        recovered = _fetch_page_title(data_url)
+        logger.info("Pass-2 title result: %r", recovered)
+        for tbl in missing:
+            tbl["title"] = recovered
 
     return validated, raw
