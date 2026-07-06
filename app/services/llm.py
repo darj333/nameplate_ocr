@@ -30,52 +30,62 @@ Example:
 {"attributes": [{"name": "Manufacturer", "value": "Siemens"}, {"name": "Serial Number", "value": "SN-12345"}]}
 """
 
-_TABLE_PROMPT = """\
-This page is from a technical document and contains one or more tables listing \
-electrical or industrial equipment items (bill of materials, equipment schedules, etc.).
+_TABLES_PROMPT = """\
+This page is from a technical document.
 
-Extract every table and every data row from this page.
+Find EVERY genuine TABLE on this page. A table is a GRID of cells laid out in rows \
+and columns with a clear header row of column names at the top — for example an \
+equipment schedule, bill of materials, or parts list.
+
+For each table return:
+- "title": the heading printed directly above the grid (often underlined, in ALL \
+  CAPS, or containing an alphanumeric code, e.g. "ANTEMĂSURĂTOARE TE403", \
+  "LISTA ECHIPAMENTE", "TABLOU ELECTRIC T1"). Use "" only if there is truly no text \
+  above the grid.
+- "headers": the column names of the table's header row, left to right, in order.
+
+Return ONLY valid JSON — no markdown fences, no commentary:
+{"tables": [{"title": "EXACT HEADING", "headers": ["Col 1", "Col 2", "Col 3"]}]}
+
+Rules:
+- A genuine table MUST have at least TWO columns. A single column of text is a list \
+  or a paragraph, NOT a table — do not include it.
+- Do NOT include section/chapter headings, figure or image captions, paragraphs, \
+  bullet or numbered lists, footers, or signature blocks — only row/column grids.
+- When in doubt about whether a block of text is a table, do NOT include it.
+- Copy titles and column names EXACTLY as they appear (preserve diacritics, spacing, codes).
+- If this page contains no genuine table, return: {"tables": []}
+"""
+
+_ROWS_PROMPT_TEMPLATE = """\
+This page is from a technical document. Extract ALL data rows from the table \
+titled "{title}".
+
+That table's column headers, in left-to-right order, are:
+{headers}
+
+Each data row MUST be an object with EXACTLY those keys (use no other keys).
 
 Return ONLY valid JSON — no markdown fences, no commentary — in exactly this structure:
-{
-  "tables": [
-    {
-      "title": "<heading text — see rules below>",
-      "rows": [
-        {"<column header 1>": "<cell value>", "<column header 2>": "<cell value>", ...},
-        ...
-      ]
-    }
+{{
+  "rows": [
+    {{"<header 1>": "<cell value>", "<header 2>": "<cell value>", ...}},
+    ...
   ]
-}
+}}
 
-Title rules:
-- Look for ANY text that appears ABOVE the table: underlined text, bold text, ALL-CAPS text,
-  alphanumeric codes (e.g. "ANTEMĂSURĂTOARE TE403", "LISTA ECHIPAMENTE", "TABLOU TE-01").
-- Copy that heading text EXACTLY as it appears on the page (preserve diacritics, spacing).
-- Only use an empty string "" if there is truly NO text outside the table grid itself.
-
-Data rules:
-- Preserve all column header names exactly as they appear (including diacritics).
-- Preserve all cell values exactly as written.
-- Where a cell says "Idem" (meaning "same as above"), replace it with the full text from the \
-most recent non-Idem cell in that same column.
+Rules:
+- Use the header names listed above as the keys of every row object, exactly as written.
+- Preserve all cell values exactly as written (including diacritics).
+- Where a cell says "Idem" (meaning "same as above"), replace it with the full text \
+from the most recent non-Idem cell in that same column.
 - Omit a key from a row object only if that cell is completely empty.
-- Do not skip any data rows.
-- If a column contains only row numbers (e.g. 1, 2, 3…) use "Nr. Crt." as the column name.
+- Do NOT skip any data rows — include every row in the table.
+- If a column contains only row numbers (e.g. 1, 2, 3…) use "Nr. Crt." as that header.
 """
 
-_TITLE_PROMPT = """\
-Look at this document page. There is a table on the page.
-
-What is the heading or title written ABOVE the table?
-It is often underlined, in capital letters, or contains an alphanumeric code \
-(for example: "ANTEMĂSURĂTOARE TE403", "LISTA ECHIPAMENTE", "TABLOU ELECTRIC T1").
-
-Reply with ONLY the heading text, exactly as it appears on the page.
-Do not add any explanation, punctuation, or quotes around it.
-If there is truly no heading text above the table, reply with exactly: NONE
-"""
+# A genuine table has at least this many columns; fewer = list/paragraph, not a table.
+MIN_TABLE_COLUMNS = 2
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
@@ -180,57 +190,90 @@ def structure_with_llm(image_path: str | Path) -> tuple[list[dict[str, str]], st
     return cleaned, raw
 
 
-def _fetch_page_title(data_url: str) -> str:
-    """
-    Make a focused second call to ask only for the page heading above the table.
-    Returns the title string, or "" if none is found.
-    """
-    raw = _vision_completion(data_url, _TITLE_PROMPT, max_tokens=128)
-    title = raw.strip().strip('"').strip("'")
-    if title.upper() == "NONE" or not title:
-        return ""
-    return title
-
-
 def extract_tables_from_pdf_page(
     image_bytes: bytes, mime: str = "image/png"
 ) -> tuple[list[dict], str]:
     """
-    Send a rendered PDF page (as PNG bytes) to the Groq vision model.
+    Extract all genuine tables from a rendered PDF page using two passes:
 
-    Pass 1 — extract tables + titles in one call.
-    Pass 2 — if any table came back with an empty title, make a second focused
-              call asking only for the heading text and apply it to those tables.
+    Pass 1 — DETECT tables: for each real row/column grid on the page, capture its
+             title and its column headers. Non-tables (section headings, captions,
+             paragraphs, single-column lists) are filtered out here so they never
+             reach Pass 2.
+    Pass 2 — for each detected table, make a dedicated call to extract just that
+             table's rows, anchored on the headers from Pass 1. One call per table
+             means token limits never truncate a table mid-way.
 
     Returns:
         tables   – list of {"title": str, "rows": [dict, ...]}
-        raw_text – the pass-1 model response (for debugging)
+        raw_text – concatenated raw responses (for debugging)
     """
     data_url = _bytes_to_data_url(image_bytes, mime)
-    raw = _vision_completion(data_url, _TABLE_PROMPT, max_tokens=4096)
-    data = _extract_json(raw)
 
-    tables = data.get("tables", [])
-    if not isinstance(tables, list):
-        raise ValueError(f"Expected 'tables' list, got: {type(tables)}")
+    # ── Pass 1: detect genuine tables (title + headers) ────────────────────────
+    raw_detect = _vision_completion(data_url, _TABLES_PROMPT, max_tokens=1024)
+    logger.info("Pass-1 detect raw: %s", raw_detect)
+    try:
+        detected = _extract_json(raw_detect).get("tables", [])
+    except Exception as exc:
+        logger.warning("Pass-1 parse failed (%s) — no tables extracted", exc)
+        return [], raw_detect
+    if not isinstance(detected, list):
+        logger.warning("Pass-1 'tables' not a list: %s", type(detected))
+        return [], raw_detect
 
-    validated: list[dict] = []
-    for tbl in tables:
-        title = str(tbl.get("title", "")).strip()
-        rows = tbl.get("rows", [])
-        if not isinstance(rows, list):
+    detected_tables: list[dict] = []
+    for tbl in detected:
+        if not isinstance(tbl, dict):
             continue
-        clean_rows = [r for r in rows if isinstance(r, dict) and any(str(v).strip() for v in r.values())]
+        title = str(tbl.get("title", "")).strip()
+        raw_headers = tbl.get("headers", [])
+        if not isinstance(raw_headers, list):
+            continue
+        headers = [str(h).strip() for h in raw_headers if str(h).strip()]
+        if len(headers) < MIN_TABLE_COLUMNS:
+            logger.info("Pass-1 rejecting non-table %r (headers=%r)", title, headers)
+            continue
+        detected_tables.append({"title": title, "headers": headers})
+
+    logger.info("Pass-1 detected %d genuine table(s)", len(detected_tables))
+    if not detected_tables:
+        return [], raw_detect
+
+    # ── Pass 2: extract rows per table, anchored on detected headers ───────────
+    all_raw: list[str] = [raw_detect]
+    tables: list[dict] = []
+
+    for tbl in detected_tables:
+        title, headers = tbl["title"], tbl["headers"]
+        prompt = _ROWS_PROMPT_TEMPLATE.format(title=title, headers=", ".join(headers))
+        raw_rows = _vision_completion(data_url, prompt, max_tokens=8192)
+        all_raw.append(f"\n--- {title} ---\n{raw_rows}")
+        logger.info("Pass-2 rows for %r: %d chars", title, len(raw_rows))
+
+        try:
+            rows = _extract_json(raw_rows).get("rows", [])
+        except Exception as exc:
+            logger.warning("Pass-2 row parse failed for %r: %s", title, exc)
+            continue
+        if not isinstance(rows, list):
+            logger.warning("Pass-2 'rows' not a list for %r: %s", title, type(rows))
+            continue
+
+        # Coerce every row to the detected headers → fixed columns + stable order,
+        # and drop rows that are entirely empty.
+        clean_rows: list[dict] = []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            coerced = {h: str(r.get(h, "")).strip() for h in headers}
+            if any(coerced.values()):
+                clean_rows.append(coerced)
+
         if clean_rows:
-            validated.append({"title": title, "rows": clean_rows})
+            tables.append({"title": title, "rows": clean_rows})
+            logger.info("Table %r: %d row(s) extracted", title, len(clean_rows))
+        else:
+            logger.warning("Table %r: no non-empty rows found", title)
 
-    # Pass 2: recover missing titles with a dedicated focused call
-    missing = [t for t in validated if not t["title"]]
-    if missing:
-        logger.info("Pass-2 title fetch for %d untitled table(s) on this page", len(missing))
-        recovered = _fetch_page_title(data_url)
-        logger.info("Pass-2 title result: %r", recovered)
-        for tbl in missing:
-            tbl["title"] = recovered
-
-    return validated, raw
+    return tables, "\n".join(all_raw)
