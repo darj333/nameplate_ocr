@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://postgres:postgres@localhost:5432/nameplate_ocr"
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
-    groq_vision_model: str = "llama-3.2-11b-vision-preview"
+    groq_vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
     upload_dir: str = "/data/uploads"
     max_upload_size_mb: int = 20
 
