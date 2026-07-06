@@ -147,7 +147,10 @@ def _process_pdf(nameplate: Nameplate, db: Session) -> None:
             continue
 
         for table in tables:
-            title = table["title"] or f"Page {page_num} Table"
+            title = table["title"].strip()
+            if not title:
+                logger.info("[%d] Page %d: skipping untitled table", nameplate.id, page_num)
+                continue
             logger.info("[%d] Table %r: %d row(s)", nameplate.id, title, len(table["rows"]))
 
             pairs = _table_to_pairs(table, original_filename)
