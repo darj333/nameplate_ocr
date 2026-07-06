@@ -147,9 +147,13 @@ def _process_pdf(nameplate: Nameplate, db: Session) -> None:
             continue
 
         for table in tables:
-            title = table["title"]
+            title = table["title"].strip()
             if not title:
-                logger.info("[%d] Page %d: skipping untitled table", nameplate.id, page_num)
+                logger.warning(
+                    "[%d] Page %d: skipping untitled table (%d rows). "
+                    "Raw response snippet: %.200s",
+                    nameplate.id, page_num, len(table.get("rows", [])), raw,
+                )
                 continue
             logger.info("[%d] Table %r: %d row(s)", nameplate.id, title, len(table["rows"]))
 

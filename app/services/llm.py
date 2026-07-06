@@ -40,7 +40,7 @@ Return ONLY valid JSON — no markdown fences, no commentary — in exactly this
 {
   "tables": [
     {
-      "title": "<table heading visible on the page, or empty string if none>",
+      "title": "<see title rules below>",
       "rows": [
         {"<column header 1>": "<cell value>", "<column header 2>": "<cell value>", ...},
         ...
@@ -49,7 +49,14 @@ Return ONLY valid JSON — no markdown fences, no commentary — in exactly this
   ]
 }
 
-Rules:
+Title rules (IMPORTANT — read carefully):
+- Look for ANY text that appears ABOVE the table or acts as its heading. This includes:
+  underlined text, bold text, ALL-CAPS text, alphanumeric codes (e.g. "ANTEMĂSURĂTOARE TE403",
+  "LISTA ECHIPAMENTE", "TABLOU TE-01"), section headings, or any label identifying the table.
+- Copy that heading text EXACTLY as it appears on the page.
+- Only use an empty string "" if the page truly has no text above or near the table at all.
+
+Data rules:
 - Preserve all column header names exactly as they appear (including Romanian or other languages).
 - Preserve all cell values exactly as written, including special characters and diacritics.
 - Where a cell says "Idem" (meaning "same as above"), replace it with the full text from the \
