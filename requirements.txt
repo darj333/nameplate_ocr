@@ -7,7 +7,6 @@ psycopg2-binary==2.9.10
 python-multipart==0.0.20
 python-dotenv==1.0.1
 groq==0.13.1
-easyocr==1.7.2
 Pillow>=11.1.0
 pandas==2.2.3
 openpyxl==3.1.5

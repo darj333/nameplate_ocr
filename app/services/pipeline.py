@@ -1,13 +1,11 @@
-"""Background processing pipeline: OCR → LLM → DB."""
+"""Background processing pipeline: image → Groq vision LLM → DB."""
 from __future__ import annotations
 
 import logging
 
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
 from app.models.nameplate import Nameplate, NameplateAttribute
-from app.services.ocr import run_ocr
 from app.services.llm import structure_with_llm
 
 logger = logging.getLogger(__name__)
@@ -15,31 +13,23 @@ logger = logging.getLogger(__name__)
 
 def process_nameplate(nameplate_id: int, db: Session) -> None:
     """
-    Full extraction pipeline for a single nameplate row.
-    Updates *status* and *attributes* in-place.
-    Called from a FastAPI BackgroundTask.
+    Send the uploaded image directly to the Groq vision model,
+    parse the returned attributes, and persist them.
     """
     nameplate: Nameplate | None = db.get(Nameplate, nameplate_id)
     if nameplate is None:
         logger.error("process_nameplate: id=%d not found", nameplate_id)
         return
 
-    settings = get_settings()
-
     try:
-        # ── Step 1: OCR ───────────────────────────────────────────────────────
-        logger.info("[%d] Starting OCR on %s", nameplate_id, nameplate.file_path)
-        raw_text = run_ocr(nameplate.file_path, languages=settings.ocr_languages)
-        nameplate.ocr_raw_text = raw_text
-        db.commit()
-        logger.info("[%d] OCR complete (%d chars)", nameplate_id, len(raw_text))
-
-        # ── Step 2: LLM structuring ───────────────────────────────────────────
-        logger.info("[%d] Sending to LLM for structuring…", nameplate_id)
-        pairs = structure_with_llm(raw_text)
+        logger.info("[%d] Sending image to vision LLM: %s", nameplate_id, nameplate.file_path)
+        pairs, raw_response = structure_with_llm(nameplate.file_path)
         logger.info("[%d] LLM returned %d attribute pairs", nameplate_id, len(pairs))
 
-        # ── Step 3: Persist attributes ────────────────────────────────────────
+        # Store the raw LLM response in ocr_raw_text for debugging / reprocessing
+        nameplate.ocr_raw_text = raw_response
+
+        # Replace any existing attributes
         db.query(NameplateAttribute).filter(
             NameplateAttribute.nameplate_id == nameplate_id
         ).delete()
