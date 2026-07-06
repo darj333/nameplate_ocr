@@ -49,6 +49,37 @@ def _image_to_data_url(image_path: str | Path) -> str:
     return _bytes_to_data_url(path.read_bytes(), mime)
 
 
+def _extract_json(raw: str) -> dict:
+    """
+    Robustly extract a JSON object from a model response that may be wrapped
+    in markdown code fences or contain extra commentary.
+
+    Strategy:
+    1. Strip ``` fences if present.
+    2. If that still fails to parse, find the outermost { … } block.
+    3. Raise a clear ValueError if nothing works.
+    """
+    # Step 1: strip markdown fences (handles ```json ... ``` and ``` ... ```)
+    clean = re.sub(r"^```(?:json)?\s*\n?", "", raw.strip(), flags=re.IGNORECASE)
+    clean = re.sub(r"\n?```\s*$", "", clean).strip()
+
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        pass
+
+    # Step 2: extract the outermost { … } block
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(raw[start : end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    raise ValueError(f"LLM returned invalid JSON: {raw!r}")
+
+
 def _call_vision_llm(data_url: str) -> tuple[list[dict[str, str]], str]:
     """Send a single image data-URL to the Groq vision model and parse the result."""
     settings = get_settings()
@@ -74,14 +105,7 @@ def _call_vision_llm(data_url: str) -> tuple[list[dict[str, str]], str]:
     raw_response = completion.choices[0].message.content.strip()
     logger.debug("Vision LLM raw response: %s", raw_response)
 
-    # Strip accidental markdown fences
-    clean = re.sub(r"^```(?:json)?\s*", "", raw_response)
-    clean = re.sub(r"\s*```$", "", clean)
-
-    try:
-        data = json.loads(clean)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"LLM returned invalid JSON: {raw_response!r}") from exc
+    data = _extract_json(raw_response)
 
     attributes = data.get("attributes", [])
     if not isinstance(attributes, list):
