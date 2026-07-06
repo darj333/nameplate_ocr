@@ -302,6 +302,14 @@ async function openDetail(id) {
   }
 }
 
+function tryParseJsonArray(value) {
+  if (!value || !value.startsWith("[")) return null;
+  try {
+    const p = JSON.parse(value);
+    return Array.isArray(p) ? p : null;
+  } catch { return null; }
+}
+
 function renderDetailPanel(np) {
   document.getElementById("detail-title").textContent = `Nameplate #${np.id}`;
   document.getElementById("detail-filename").textContent = np.filename;
@@ -313,6 +321,51 @@ function renderDetailPanel(np) {
   const container = document.getElementById("attributes-container");
   container.innerHTML = "";
   (np.attributes || []).forEach(attr => addAttrRow(container, attr));
+
+  // Detect table records: any attribute whose value is a JSON array
+  const tableView  = document.getElementById("table-view");
+  const addAttrBtn = document.getElementById("add-attr-btn");
+  const tableCols  = (np.attributes || []).filter(a => tryParseJsonArray(a.attribute_value));
+
+  if (tableCols.length > 0) {
+    renderAttrTable(tableCols);
+    tableView.classList.remove("hidden");
+    // Keep the raw attr rows accessible but collapse them under a toggle
+    addAttrBtn.style.display = "none";
+  } else {
+    tableView.classList.add("hidden");
+    addAttrBtn.style.display = "";
+  }
+}
+
+function renderAttrTable(tableCols) {
+  const thead = document.querySelector("#attr-table thead");
+  const tbody = document.querySelector("#attr-table tbody");
+  thead.innerHTML = "";
+  tbody.innerHTML = "";
+
+  // Column headers row
+  const headerRow = document.createElement("tr");
+  tableCols.forEach(col => {
+    const th = document.createElement("th");
+    th.textContent = col.attribute_name;
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+
+  // Data rows — zip the column arrays
+  const arrays = tableCols.map(col => tryParseJsonArray(col.attribute_value));
+  const rowCount = Math.max(...arrays.map(a => a.length));
+
+  for (let i = 0; i < rowCount; i++) {
+    const tr = document.createElement("tr");
+    arrays.forEach(arr => {
+      const td = document.createElement("td");
+      td.textContent = arr[i] ?? "";
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
 }
 
 function addAttrRow(container, attr = {}) {

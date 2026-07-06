@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 from pathlib import Path
 
@@ -83,46 +84,34 @@ def _process_image(nameplate: Nameplate, db: Session) -> None:
 
 def _table_to_pairs(table: dict, source_filename: str) -> list[dict[str, str]]:
     """
-    Convert a single extracted table into a flat list of attribute pairs.
+    Convert a single extracted table into attribute pairs where each column
+    is stored as a JSON array of its cell values (top to bottom).
 
-    Layout:
-      - "Source"  → original PDF filename
-      - "Columns" → pipe-separated list of column headers
-      - One attribute per data row:
-          name  = Nr. Crt. value when available, otherwise "Row N"
-          value = all cell values joined with " | " in column order
+    A downstream consumer (export, UI) can detect these JSON-array attributes
+    and reconstruct the full table by zipping the columns back together.
+
+    Special attributes added:
+      "Source"  → original PDF filename (plain string)
     """
     rows = table["rows"]
     if not rows:
         return []
 
-    # Determine stable column order from the first row that has the most keys
+    # Stable column order: union of all keys in document order
     columns: list[str] = list(dict.fromkeys(
         col for row in rows for col in row.keys()
     ))
 
     pairs: list[dict[str, str]] = [
         {"name": "Source", "value": source_filename},
-        {"name": "Columns", "value": " | ".join(columns)},
     ]
 
-    for row_idx, row in enumerate(rows):
-        # Row label: prefer the explicit row-number column
-        nr = (
-            row.get("Nr. Crt.")
-            or row.get("Nr.")
-            or row.get("No.")
-            or row.get("#")
-            or ""
-        )
-        row_label = str(nr).strip() if nr else f"Row {row_idx + 1}"
-
-        # Value: cell values in column order, blank when missing
-        cell_values = " | ".join(str(row.get(col, "")).strip() for col in columns)
-        if not cell_values.replace("|", "").strip():
-            continue  # skip rows that are entirely empty
-
-        pairs.append({"name": row_label, "value": cell_values})
+    for col in columns:
+        values = [str(row.get(col, "")).strip() for row in rows]
+        pairs.append({
+            "name": col,
+            "value": json.dumps(values, ensure_ascii=False),
+        })
 
     return pairs
 

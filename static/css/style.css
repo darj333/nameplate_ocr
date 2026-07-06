@@ -178,6 +178,35 @@ tbody tr.selected { background: var(--brand-light); }
 .attr-row input:focus { outline: none; border-color: var(--brand); }
 .detail-actions { display: flex; gap: .6rem; margin-top: .5rem; }
 
+/* ── Attribute table (PDF table records) ─────────────────────────────────── */
+.attr-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: .5rem;
+}
+#attr-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .82rem;
+}
+#attr-table th {
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+  padding: .45rem .7rem;
+  border-bottom: 2px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+#attr-table td {
+  padding: .4rem .7rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+#attr-table tbody tr:last-child td { border-bottom: none; }
+#attr-table tbody tr:hover { background: var(--brand-light); }
+
 /* ── Raw OCR ──────────────────────────────────────────────────────────────── */
 .raw-ocr-details summary { cursor: pointer; font-size: .82rem; color: var(--muted); user-select: none; }
 .raw-ocr-details pre {
