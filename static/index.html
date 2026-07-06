@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nameplate OCR Export</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="header-inner">
+      <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="2" y="4" width="20" height="16" rx="2"/>
+        <line x1="7" y1="9" x2="17" y2="9"/>
+        <line x1="7" y1="13" x2="13" y2="13"/>
+      </svg>
+      <span class="logo-text">Nameplate OCR Export</span>
+    </div>
+  </header>
+
+  <main class="main">
+    <!-- Upload card -->
+    <section class="card upload-card" id="upload-section">
+      <h2 class="card-title">Upload Nameplate Image</h2>
+      <div class="drop-zone" id="drop-zone">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 16V4m0 0L8 8m4-4l4 4"/>
+          <path d="M20 16.7A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"/>
+        </svg>
+        <p>Drag &amp; drop an image here</p>
+        <p class="hint">or click to browse — JPEG, PNG, WEBP, TIFF, BMP (max 20 MB)</p>
+        <input type="file" id="file-input" accept="image/*" hidden />
+      </div>
+      <div id="upload-progress" class="upload-progress hidden">
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        <span id="upload-status-text">Uploading…</span>
+      </div>
+    </section>
+
+    <!-- Nameplates table -->
+    <section class="card table-card">
+      <div class="table-header">
+        <h2 class="card-title" style="margin:0">Extracted Records</h2>
+        <div class="export-bar">
+          <button class="btn btn-outline" id="export-csv-btn">⬇ CSV</button>
+          <button class="btn btn-outline" id="export-xlsx-btn">⬇ Excel</button>
+          <button class="btn btn-outline btn-danger" id="delete-selected-btn" style="display:none">🗑 Delete selected</button>
+        </div>
+      </div>
+
+      <div class="table-wrap" id="table-wrap">
+        <table id="nameplates-table">
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="select-all" /></th>
+              <th>ID</th>
+              <th>Filename</th>
+              <th>Uploaded</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="nameplates-tbody"></tbody>
+        </table>
+        <div id="empty-state" class="empty-state hidden">
+          <p>No nameplates yet. Upload an image to get started.</p>
+        </div>
+        <div class="pagination" id="pagination"></div>
+      </div>
+    </section>
+
+    <!-- Detail / edit panel -->
+    <div id="detail-overlay" class="overlay hidden">
+      <div class="detail-panel">
+        <div class="detail-header">
+          <h3 id="detail-title">Nameplate #…</h3>
+          <button class="btn-icon close-btn" id="close-detail">✕</button>
+        </div>
+
+        <div id="detail-status-bar"></div>
+
+        <div class="detail-body">
+          <div class="detail-meta">
+            <span id="detail-filename" class="meta-chip"></span>
+            <span id="detail-uploaded" class="meta-chip"></span>
+          </div>
+
+          <h4>Extracted Attributes</h4>
+          <div id="attributes-container"></div>
+          <button class="btn btn-sm btn-outline" id="add-attr-btn">+ Add row</button>
+
+          <div class="detail-actions">
+            <button class="btn btn-primary" id="save-attrs-btn">Save changes</button>
+            <button class="btn btn-outline" id="reprocess-btn">↺ Reprocess</button>
+          </div>
+
+          <details class="raw-ocr-details">
+            <summary>Raw OCR text</summary>
+            <pre id="raw-ocr-pre"></pre>
+          </details>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
