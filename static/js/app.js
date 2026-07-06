@@ -35,46 +35,125 @@ async function apiJSON(path, options = {}) {
 }
 
 // ── Upload ─────────────────────────────────────────────────────────────────
-const dropZone   = document.getElementById("drop-zone");
-const fileInput  = document.getElementById("file-input");
-const progressEl = document.getElementById("upload-progress");
-const fillEl     = document.getElementById("progress-fill");
-const statusText = document.getElementById("upload-status-text");
+const dropZone      = document.getElementById("drop-zone");
+const fileInput     = document.getElementById("file-input");
+const folderInput   = document.getElementById("folder-input");
+const progressEl    = document.getElementById("upload-progress");
+const fillEl        = document.getElementById("progress-fill");
+const statusText    = document.getElementById("upload-status-text");
 
-dropZone.addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", () => fileInput.files[0] && uploadFile(fileInput.files[0]));
+const ACCEPTED_MIME = new Set([
+  "image/jpeg", "image/png", "image/webp", "image/tiff", "image/bmp", "application/pdf",
+]);
+
+function isAccepted(file) {
+  if (ACCEPTED_MIME.has(file.type)) return true;
+  // Browsers sometimes report PDF as empty string; fall back to extension
+  return file.name.toLowerCase().endsWith(".pdf");
+}
+
+document.getElementById("browse-files-btn").addEventListener("click", e => {
+  e.stopPropagation();
+  fileInput.click();
+});
+document.getElementById("browse-folder-btn").addEventListener("click", e => {
+  e.stopPropagation();
+  folderInput.click();
+});
+
+fileInput.addEventListener("change", () => {
+  const files = [...fileInput.files].filter(isAccepted);
+  if (files.length) uploadBatch(files);
+  fileInput.value = "";
+});
+folderInput.addEventListener("change", () => {
+  const files = [...folderInput.files].filter(isAccepted);
+  if (files.length) uploadBatch(files);
+  folderInput.value = "";
+});
 
 dropZone.addEventListener("dragover", e => { e.preventDefault(); dropZone.classList.add("drag-over"); });
 dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
-dropZone.addEventListener("drop", e => {
+dropZone.addEventListener("drop", async e => {
   e.preventDefault();
   dropZone.classList.remove("drag-over");
-  const file = e.dataTransfer.files[0];
-  if (file) uploadFile(file);
+
+  // Collect files from all dropped items (handles both files and folders)
+  const collected = [];
+  const items = [...(e.dataTransfer.items || [])];
+  await Promise.all(items.map(item => collectFromEntry(item.webkitGetAsEntry(), collected)));
+  const accepted = collected.filter(isAccepted);
+  if (accepted.length) uploadBatch(accepted);
 });
 
-async function uploadFile(file) {
+async function collectFromEntry(entry, out) {
+  if (!entry) return;
+  if (entry.isFile) {
+    await new Promise(resolve => entry.file(f => { out.push(f); resolve(); }));
+  } else if (entry.isDirectory) {
+    const reader = entry.createReader();
+    await new Promise(resolve => {
+      reader.readEntries(async entries => {
+        await Promise.all(entries.map(e2 => collectFromEntry(e2, out)));
+        resolve();
+      });
+    });
+  }
+}
+
+async function uploadBatch(files) {
+  const total = files.length;
+  let done = 0;
+  let failed = 0;
+
   progressEl.classList.remove("hidden");
-  fillEl.style.width = "30%";
-  statusText.textContent = "Uploading…";
+  fillEl.style.width = "0%";
+  statusText.textContent = `Uploading 0 / ${total}…`;
+
+  for (const file of files) {
+    try {
+      await uploadFile(file, /* silent */ true);
+      done++;
+    } catch (err) {
+      failed++;
+      toast(`Failed: ${file.name} — ${err.message}`, "error");
+    }
+    const pct = Math.round(((done + failed) / total) * 100);
+    fillEl.style.width = `${pct}%`;
+    statusText.textContent = `Uploading ${done + failed} / ${total}…`;
+  }
+
+  const summary = failed
+    ? `${done} uploaded, ${failed} failed.`
+    : `${done} file${done !== 1 ? "s" : ""} uploaded successfully.`;
+  statusText.textContent = summary;
+  toast(summary, failed ? "error" : "success");
+  setTimeout(() => { progressEl.classList.add("hidden"); fillEl.style.width = "0%"; }, 3000);
+  await loadTable();
+}
+
+async function uploadFile(file, silent = false) {
+  if (!silent) {
+    progressEl.classList.remove("hidden");
+    fillEl.style.width = "30%";
+    statusText.textContent = "Uploading…";
+  }
 
   const fd = new FormData();
   fd.append("file", file);
 
-  try {
-    const data = await apiJSON("/nameplates/upload", { method: "POST", body: fd });
+  const data = await apiJSON("/nameplates/upload", { method: "POST", body: fd });
+
+  if (!silent) {
     fillEl.style.width = "100%";
     statusText.textContent = `Accepted (ID ${data.id}). Extracting…`;
     toast(`Upload OK — ID ${data.id}. OCR running…`, "success");
-    fileInput.value = "";
     setTimeout(() => { progressEl.classList.add("hidden"); fillEl.style.width = "0%"; }, 2000);
-    startPolling(data.id);
     await loadTable();
-  } catch (err) {
-    statusText.textContent = `Error: ${err.message}`;
-    toast(`Upload failed: ${err.message}`, "error");
-    fillEl.style.width = "0%";
   }
+
+  startPolling(data.id);
+  return data;
 }
 
 // ── Polling ────────────────────────────────────────────────────────────────

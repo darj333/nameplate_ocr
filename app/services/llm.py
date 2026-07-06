@@ -13,6 +13,7 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+
 _PROMPT = """\
 This is a photo of an industrial equipment nameplate (motor, pump, transformer, generator, etc.).
 Extract every attribute/value pair that is legible on the nameplate.
@@ -28,6 +29,11 @@ Example:
 """
 
 
+def _bytes_to_data_url(image_bytes: bytes, mime: str = "image/png") -> str:
+    data = base64.standard_b64encode(image_bytes).decode()
+    return f"data:{mime};base64,{data}"
+
+
 def _image_to_data_url(image_path: str | Path) -> str:
     path = Path(image_path)
     suffix = path.suffix.lower()
@@ -40,24 +46,16 @@ def _image_to_data_url(image_path: str | Path) -> str:
         ".tiff": "image/tiff",
         ".tif": "image/tiff",
     }.get(suffix, "image/jpeg")
-
-    data = base64.standard_b64encode(path.read_bytes()).decode()
-    return f"data:{mime};base64,{data}"
+    return _bytes_to_data_url(path.read_bytes(), mime)
 
 
-def structure_with_llm(image_path: str | Path) -> tuple[list[dict[str, str]], str]:
-    """
-    Send *image_path* directly to a Groq vision model.
-    Returns (attributes, raw_text) where raw_text is the model's full response
-    (kept for debugging, stored in ocr_raw_text column).
-    """
+def _call_vision_llm(data_url: str) -> tuple[list[dict[str, str]], str]:
+    """Send a single image data-URL to the Groq vision model and parse the result."""
     settings = get_settings()
     if not settings.groq_api_key:
         raise RuntimeError("GROQ_API_KEY is not configured")
 
     client = Groq(api_key=settings.groq_api_key)
-    data_url = _image_to_data_url(image_path)
-
     completion = client.chat.completions.create(
         model=settings.groq_vision_model,
         messages=[
@@ -94,5 +92,24 @@ def structure_with_llm(image_path: str | Path) -> tuple[list[dict[str, str]], st
         for item in attributes
         if str(item.get("name", "")).strip() and str(item.get("value", "")).strip()
     ]
-
     return cleaned, raw_response
+
+
+def structure_with_llm(image_path: str | Path) -> tuple[list[dict[str, str]], str]:
+    """
+    Send *image_path* (image file) to the Groq vision model.
+    Returns (attributes, raw_text).
+    """
+    data_url = _image_to_data_url(image_path)
+    return _call_vision_llm(data_url)
+
+
+def structure_with_llm_bytes(
+    image_bytes: bytes, mime: str = "image/png"
+) -> tuple[list[dict[str, str]], str]:
+    """
+    Send raw image *bytes* to the Groq vision model (used for in-memory PDF pages).
+    Returns (attributes, raw_text).
+    """
+    data_url = _bytes_to_data_url(image_bytes, mime)
+    return _call_vision_llm(data_url)

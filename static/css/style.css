@@ -69,6 +69,7 @@ body {
 .drop-zone svg { width: 44px; height: 44px; color: var(--brand); margin-bottom: .75rem; }
 .drop-zone p { color: var(--muted); }
 .drop-zone .hint { font-size: .8rem; margin-top: .25rem; }
+.upload-btn-row { display: flex; gap: .5rem; justify-content: center; margin-top: 1rem; }
 
 /* ── Upload progress ──────────────────────────────────────────────────────── */
 .upload-progress { margin-top: 1rem; }

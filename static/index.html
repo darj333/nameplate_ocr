@@ -21,15 +21,20 @@
   <main class="main">
     <!-- Upload card -->
     <section class="card upload-card" id="upload-section">
-      <h2 class="card-title">Upload Nameplate Image</h2>
+      <h2 class="card-title">Upload Nameplate</h2>
       <div class="drop-zone" id="drop-zone">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M12 16V4m0 0L8 8m4-4l4 4"/>
           <path d="M20 16.7A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"/>
         </svg>
-        <p>Drag &amp; drop an image here</p>
-        <p class="hint">or click to browse — JPEG, PNG, WEBP, TIFF, BMP (max 20 MB)</p>
-        <input type="file" id="file-input" accept="image/*" hidden />
+        <p>Drag &amp; drop files or a folder here</p>
+        <p class="hint">JPEG, PNG, WEBP, TIFF, BMP, PDF (max 20 MB each)</p>
+        <div class="upload-btn-row">
+          <button type="button" class="btn btn-sm btn-outline" id="browse-files-btn">Browse files</button>
+          <button type="button" class="btn btn-sm btn-outline" id="browse-folder-btn">Browse folder</button>
+        </div>
+        <input type="file" id="file-input" accept="image/*,.pdf" multiple hidden />
+        <input type="file" id="folder-input" accept="image/*,.pdf" webkitdirectory multiple hidden />
       </div>
       <div id="upload-progress" class="upload-progress hidden">
         <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
@@ -63,7 +68,7 @@
           <tbody id="nameplates-tbody"></tbody>
         </table>
         <div id="empty-state" class="empty-state hidden">
-          <p>No nameplates yet. Upload an image to get started.</p>
+          <p>No nameplates yet. Upload an image, PDF, or folder to get started.</p>
         </div>
         <div class="pagination" id="pagination"></div>
       </div>
