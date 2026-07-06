@@ -81,26 +81,71 @@ def _process_image(nameplate: Nameplate, db: Session) -> None:
 
 # ── PDF processing ─────────────────────────────────────────────────────────────
 
+def _table_to_pairs(table: dict, source_filename: str) -> list[dict[str, str]]:
+    """
+    Convert a single extracted table into a flat list of attribute pairs.
+
+    Layout:
+      - "Source"  → original PDF filename
+      - "Columns" → pipe-separated list of column headers
+      - One attribute per data row:
+          name  = Nr. Crt. value when available, otherwise "Row N"
+          value = all cell values joined with " | " in column order
+    """
+    rows = table["rows"]
+    if not rows:
+        return []
+
+    # Determine stable column order from the first row that has the most keys
+    columns: list[str] = list(dict.fromkeys(
+        col for row in rows for col in row.keys()
+    ))
+
+    pairs: list[dict[str, str]] = [
+        {"name": "Source", "value": source_filename},
+        {"name": "Columns", "value": " | ".join(columns)},
+    ]
+
+    for row_idx, row in enumerate(rows):
+        # Row label: prefer the explicit row-number column
+        nr = (
+            row.get("Nr. Crt.")
+            or row.get("Nr.")
+            or row.get("No.")
+            or row.get("#")
+            or ""
+        )
+        row_label = str(nr).strip() if nr else f"Row {row_idx + 1}"
+
+        # Value: cell values in column order, blank when missing
+        cell_values = " | ".join(str(row.get(col, "")).strip() for col in columns)
+        if not cell_values.replace("|", "").strip():
+            continue  # skip rows that are entirely empty
+
+        pairs.append({"name": row_label, "value": cell_values})
+
+    return pairs
+
+
 def _process_pdf(nameplate: Nameplate, db: Session) -> None:
     """
-    For each page of the PDF:
-      - Call the table-extraction LLM prompt.
-      - For every row in every table on that page, create one Nameplate record
-        whose attributes are the table columns (plus "Table" and "Page" columns
-        for context).
+    For each page of the PDF extract every table.
+    Each table becomes one Nameplate record named "<Table Title> — <PDF stem>".
+    All rows of the table are stored as attributes of that single record.
 
-    The original *nameplate* record is used for the very first row extracted.
-    If no rows are found on a page, the page is skipped silently.
+    The original placeholder record (created on upload) is reused for the
+    first table found; subsequent tables create new sibling records.
     """
     file_path = nameplate.file_path
-    base_name = Path(file_path).stem  # PDF filename without extension
+    base_name = Path(file_path).stem
+    original_filename = nameplate.filename
 
     logger.info("[%d] Rendering PDF: %s", nameplate.id, file_path)
     pages = _render_pdf_pages(file_path)
     logger.info("[%d] PDF has %d page(s)", nameplate.id, len(pages))
 
     first_record_used = False
-    total_rows = 0
+    total_tables = 0
 
     for page_idx, png_bytes in enumerate(pages):
         page_num = page_idx + 1
@@ -109,55 +154,36 @@ def _process_pdf(nameplate: Nameplate, db: Session) -> None:
         try:
             tables, raw = extract_tables_from_pdf_page(png_bytes)
         except Exception as exc:
-            logger.warning("[%d] Page %d table extraction failed: %s", nameplate.id, page_num, exc)
+            logger.warning("[%d] Page %d extraction failed: %s", nameplate.id, page_num, exc)
             continue
 
         for table in tables:
-            title = table["title"] or f"Page {page_num}"
-            rows = table["rows"]
-            logger.info("[%d] Table %r: %d row(s)", nameplate.id, title, len(rows))
+            title = table["title"] or f"Page {page_num} Table"
+            logger.info("[%d] Table %r: %d row(s)", nameplate.id, title, len(table["rows"]))
 
-            for row_idx, row in enumerate(rows):
-                # Build attribute list: table columns first, then context attrs
-                pairs: list[dict[str, str]] = []
-                for col, val in row.items():
-                    v = str(val).strip()
-                    if v:
-                        pairs.append({"name": col, "value": v})
+            pairs = _table_to_pairs(table, original_filename)
+            if not pairs:
+                continue
 
-                if not pairs:
-                    continue
+            record_name = f"{title} — {base_name}"
 
-                # Add context so it's easy to trace back to the source
-                pairs.append({"name": "Table", "value": title})
-                if len(pages) > 1:
-                    pairs.append({"name": "Page", "value": str(page_num)})
-                pairs.append({"name": "Source", "value": nameplate.filename})
+            if not first_record_used:
+                nameplate.filename = record_name
+                db.commit()
+                _save_attributes(nameplate, pairs, raw, db)
+                first_record_used = True
+            else:
+                _create_record(record_name, file_path, pairs, raw, db)
 
-                # Derive a meaningful record filename
-                nr = row.get("Nr. Crt.", row.get("Nr.", row.get("#", "")))
-                row_label = f"row {nr}" if nr else f"row {row_idx + 1}"
-                record_name = f"{base_name} — {title} — {row_label}"
+            total_tables += 1
 
-                if not first_record_used:
-                    # Reuse the placeholder record that was created on upload
-                    nameplate.filename = record_name
-                    db.commit()
-                    _save_attributes(nameplate, pairs, raw, db)
-                    first_record_used = True
-                else:
-                    _create_record(record_name, file_path, pairs, raw, db)
-
-                total_rows += 1
-
-    if total_rows == 0:
-        # No table rows found at all — mark the original record as failed
+    if total_tables == 0:
         nameplate.status = "failed"
-        nameplate.error_message = "No table rows could be extracted from this PDF."
+        nameplate.error_message = "No tables could be extracted from this PDF."
         db.commit()
-        logger.warning("[%d] No rows extracted from PDF", nameplate.id)
+        logger.warning("[%d] No tables extracted from PDF", nameplate.id)
     else:
-        logger.info("[%d] PDF pipeline complete — %d row record(s) created", nameplate.id, total_rows)
+        logger.info("[%d] PDF pipeline complete — %d table record(s) created", nameplate.id, total_tables)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
