@@ -43,13 +43,11 @@ const fillEl        = document.getElementById("progress-fill");
 const statusText    = document.getElementById("upload-status-text");
 
 const ACCEPTED_MIME = new Set([
-  "image/jpeg", "image/png", "image/webp", "image/tiff", "image/bmp", "application/pdf",
+  "image/jpeg", "image/png", "image/webp", "image/tiff", "image/bmp",
 ]);
 
 function isAccepted(file) {
-  if (ACCEPTED_MIME.has(file.type)) return true;
-  // Browsers sometimes report PDF as empty string; fall back to extension
-  return file.name.toLowerCase().endsWith(".pdf");
+  return ACCEPTED_MIME.has(file.type);
 }
 
 document.getElementById("browse-files-btn").addEventListener("click", e => {

@@ -178,7 +178,7 @@ tbody tr.selected { background: var(--brand-light); }
 .attr-row input:focus { outline: none; border-color: var(--brand); }
 .detail-actions { display: flex; gap: .6rem; margin-top: .5rem; }
 
-/* ── Attribute table (PDF table records) ─────────────────────────────────── */
+/* ── Attribute table (column-array records) ──────────────────────────────── */
 .attr-table-wrap {
   overflow-x: auto;
   border: 1px solid var(--border);

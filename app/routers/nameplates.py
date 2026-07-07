@@ -31,7 +31,6 @@ ALLOWED_CONTENT_TYPES = {
     "image/webp",
     "image/tiff",
     "image/bmp",
-    "application/pdf",
 }
 
 

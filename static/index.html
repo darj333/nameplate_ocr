@@ -28,13 +28,13 @@
           <path d="M20 16.7A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"/>
         </svg>
         <p>Drag &amp; drop files or a folder here</p>
-        <p class="hint">JPEG, PNG, WEBP, TIFF, BMP, PDF (max 20 MB each)</p>
+        <p class="hint">JPEG, PNG, WEBP, TIFF, BMP (max 20 MB each)</p>
         <div class="upload-btn-row">
           <button type="button" class="btn btn-sm btn-outline" id="browse-files-btn">Browse files</button>
           <button type="button" class="btn btn-sm btn-outline" id="browse-folder-btn">Browse folder</button>
         </div>
-        <input type="file" id="file-input" accept="image/*,.pdf" multiple hidden />
-        <input type="file" id="folder-input" accept="image/*,.pdf" webkitdirectory multiple hidden />
+        <input type="file" id="file-input" accept="image/*" multiple hidden />
+        <input type="file" id="folder-input" accept="image/*" webkitdirectory multiple hidden />
       </div>
       <div id="upload-progress" class="upload-progress hidden">
         <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
@@ -68,7 +68,7 @@
           <tbody id="nameplates-tbody"></tbody>
         </table>
         <div id="empty-state" class="empty-state hidden">
-          <p>No nameplates yet. Upload an image, PDF, or folder to get started.</p>
+          <p>No nameplates yet. Upload an image or folder to get started.</p>
         </div>
         <div class="pagination" id="pagination"></div>
       </div>
@@ -91,7 +91,7 @@
           </div>
 
           <h4>Extracted Attributes</h4>
-          <!-- Table view (PDF tables) -->
+          <!-- Table view (column-array records) -->
           <div id="table-view" class="hidden">
             <div class="table-wrap attr-table-wrap">
               <table id="attr-table"><thead></thead><tbody></tbody></table>
