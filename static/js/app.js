@@ -275,6 +275,23 @@ document.getElementById("export-xlsx-btn").addEventListener("click", () => {
 
 // ── Detail panel ───────────────────────────────────────────────────────────
 const overlay = document.getElementById("detail-overlay");
+const previewBox = document.getElementById("image-preview");
+const previewImg = document.getElementById("preview-img");
+const previewFallback = document.getElementById("preview-fallback");
+
+function showPreviewImage() {
+  previewBox.classList.remove("hidden");
+  previewImg.classList.remove("hidden");
+  previewFallback.classList.add("hidden");
+}
+function showPreviewFallback() {
+  previewBox.classList.remove("hidden");
+  previewImg.classList.add("hidden");
+  previewFallback.classList.remove("hidden");
+}
+previewImg.addEventListener("load", showPreviewImage);
+previewImg.addEventListener("error", showPreviewFallback);
+
 document.getElementById("close-detail").addEventListener("click", closeDetail);
 overlay.addEventListener("click", e => { if (e.target === overlay) closeDetail(); });
 
@@ -291,6 +308,7 @@ async function openDetail(id) {
   document.getElementById("detail-status-bar").textContent = "Loading…";
   document.getElementById("attributes-container").innerHTML = "";
   document.getElementById("raw-ocr-pre").textContent = "";
+  previewBox.classList.add("hidden");
 
   try {
     const np = await apiJSON(`/nameplates/${id}`);
@@ -312,6 +330,7 @@ function renderDetailPanel(np) {
   document.getElementById("detail-title").textContent = `Nameplate #${np.id}`;
   document.getElementById("detail-filename").textContent = np.filename;
   document.getElementById("detail-uploaded").textContent = fmtDate(np.uploaded_at);
+  previewImg.src = `/nameplates/${np.id}/image`;
   document.getElementById("detail-status-bar").innerHTML = `Status: ${statusBadge(np.status)}` +
     (np.error_message ? `<br><span style="color:var(--danger);font-size:.8rem">${escHtml(np.error_message)}</span>` : "");
   document.getElementById("raw-ocr-pre").textContent = np.ocr_raw_text || "(none)";

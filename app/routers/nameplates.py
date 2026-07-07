@@ -7,6 +7,7 @@ from pathlib import Path
 
 import aiofiles
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, Query
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -117,6 +118,20 @@ def get_nameplate(nameplate_id: int, db: Session = Depends(get_db)):
     if nameplate is None:
         raise HTTPException(status_code=404, detail="Nameplate not found")
     return NameplateOut.model_validate(nameplate)
+
+
+# ── Stored image ──────────────────────────────────────────────────────────────
+
+@router.get("/{nameplate_id}/image")
+def get_nameplate_image(nameplate_id: int, db: Session = Depends(get_db)):
+    """Stream the originally uploaded image file for preview."""
+    nameplate = db.get(Nameplate, nameplate_id)
+    if nameplate is None:
+        raise HTTPException(status_code=404, detail="Nameplate not found")
+    path = Path(nameplate.file_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Image file not found on disk")
+    return FileResponse(str(path))
 
 
 # ── Manual attribute correction ───────────────────────────────────────────────
