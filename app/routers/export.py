@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import io
-import json
 from typing import Optional
 
 import pandas as pd
@@ -14,6 +13,26 @@ from app.database import get_db
 from app.models.nameplate import Nameplate, NameplateAttribute
 
 router = APIRouter(prefix="/export", tags=["export"])
+
+# Each exported column mapped to the keywords that recognise it. The vision model
+# returns descriptive Title Case names (e.g. "Rated Current", "Power Factor"),
+# which these matchers map to the canonical column by meaning. `include` keywords
+# score a candidate attribute name; `exclude` keywords disqualify it
+# (e.g. "starting current" must not satisfy nominal current).
+FIELD_MATCHERS: dict[str, dict[str, list[str]]] = {
+    "In [A]":  {"include": ["current", "amp", "ampere", "strom"],
+                "exclude": ["start", "inrush", "locked", "no-load", "no load"]},
+    "Un [kV]": {"include": ["voltage", "volt", "spannung"],
+                "exclude": ["current"]},
+    "ηn [%]":  {"include": ["efficien", "η", "eta", "wirkungsgrad"],
+                "exclude": []},
+    "cosφn":   {"include": ["power factor", "cos", "cosφ", "cos φ", "leistungsfaktor"],
+                "exclude": []},
+    "n [rpm]": {"include": ["speed", "rpm", "revolut", "drehzahl"],
+                "exclude": []},
+}
+# Export column order (Filename and Uploaded At are prepended at build time).
+EXPORT_FIELDS: list[str] = list(FIELD_MATCHERS)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -27,55 +46,34 @@ def _parse_ids(ids_str: Optional[str]) -> list[int] | None:
         return None
 
 
-def _try_json_list(value: str) -> list[str] | None:
-    """Return a list if *value* is a JSON array string, otherwise None."""
-    if not value or not value.startswith("["):
-        return None
-    try:
-        parsed = json.loads(value)
-        return parsed if isinstance(parsed, list) else None
-    except json.JSONDecodeError:
-        return None
-
-
-def _expand_record(meta: dict, attr_map: dict[str, str]) -> list[dict]:
+def _best_value(attr_map: dict[str, str], include: list[str], exclude: list[str]) -> str:
     """
-    For plain nameplate records: return a single dict (meta + attrs).
-    For table records (attrs whose values are JSON arrays): zip the columns
-    back into individual rows, one dict per data row.
+    Pick the attribute value whose name best matches the *include* keywords.
+    Returns "" when no attribute on the nameplate matches this field.
     """
-    table_cols: dict[str, list[str]] = {}
-    plain_attrs: dict[str, str] = {}
-
+    best_score = 0
+    best_value = ""
     for name, value in attr_map.items():
-        lst = _try_json_list(value or "")
-        if lst is not None:
-            table_cols[name] = lst
-        else:
-            plain_attrs[name] = value
-
-    if not table_cols:
-        return [{**meta, **plain_attrs}]
-
-    row_count = max(len(v) for v in table_cols.values())
-    rows = []
-    for i in range(row_count):
-        row = dict(meta)
-        row.update(plain_attrs)
-        for col, values in table_cols.items():
-            row[col] = values[i] if i < len(values) else ""
-        rows.append(row)
-    return rows
+        low = name.lower()
+        if any(ex in low for ex in exclude):
+            continue
+        score = sum(1 for kw in include if kw in low)
+        if score > best_score:
+            best_score = score
+            best_value = value
+    return best_value
 
 
 def _build_dataframe(db: Session, ids: list[int] | None) -> pd.DataFrame:
+    columns = ["Filename", "Uploaded At", *EXPORT_FIELDS]
+
     query = db.query(Nameplate)
     if ids:
         query = query.filter(Nameplate.id.in_(ids))
     records = query.order_by(Nameplate.id).all()
 
     if not records:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=columns)
 
     record_ids = [rec.id for rec in records]
     attrs = (
@@ -88,20 +86,18 @@ def _build_dataframe(db: Session, ids: list[int] | None) -> pd.DataFrame:
     for a in attrs:
         attr_map[a.nameplate_id][a.attribute_name] = a.attribute_value or ""
 
-    all_rows: list[dict] = []
+    rows: list[dict] = []
     for rec in records:
-        meta = {
-            "ID": rec.id,
+        amap = attr_map[rec.id]
+        row: dict = {
             "Filename": rec.filename,
             "Uploaded At": rec.uploaded_at,
-            "Status": rec.status,
         }
-        all_rows.extend(_expand_record(meta, attr_map[rec.id]))
+        for field, matcher in FIELD_MATCHERS.items():
+            row[field] = _best_value(amap, matcher["include"], matcher["exclude"])
+        rows.append(row)
 
-    df = pd.DataFrame(all_rows)
-    meta_cols = ["ID", "Filename", "Uploaded At", "Status"]
-    attr_cols = [c for c in df.columns if c not in meta_cols]
-    return df[meta_cols + attr_cols]
+    return pd.DataFrame(rows, columns=columns)
 
 
 # ── CSV ────────────────────────────────────────────────────────────────────────
