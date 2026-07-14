@@ -14,12 +14,34 @@ from app.models.nameplate import Nameplate, NameplateAttribute
 
 router = APIRouter(prefix="/export", tags=["export"])
 
-# Each exported column mapped to the keywords that recognise it. The vision model
-# returns descriptive Title Case names (e.g. "Rated Current", "Power Factor"),
-# which these matchers map to the canonical column by meaning. `include` keywords
-# score a candidate attribute name; `exclude` keywords disqualify it
-# (e.g. "starting current" must not satisfy nominal current).
+# Each image-derived column mapped to the keywords that recognise it. The vision
+# model returns descriptive Title Case names (e.g. "Rated Current", "Power
+# Factor", "Manufacturer", "Type"); these matchers map that freeform name to the
+# canonical column by meaning. `include` keywords are listed in priority order — a
+# match against an earlier keyword always wins (so "Serial Number" beats "Article
+# No"). `exclude` keywords disqualify a candidate (e.g. "starting current" for
+# nominal current, "construction type" for model).
 FIELD_MATCHERS: dict[str, dict[str, list[str]]] = {
+    "Serial No": {
+        "include": ["serial", "serial no", "serial number", "s/n", "seriennummer",
+                    "product", "product no", "product id", "product code", "product number",
+                    "article", "article no", "order no", "order number", "bestellnummer",
+                    "material no", "material number", "materialnummer", "item no", "item number",
+                    "ident"],
+        "exclude": [],
+    },
+    "Brand": {
+        "include": ["manufacturer", "brand", "make", "marque", "hersteller",
+                    "fabrikat", "producer", "produced by", "company"],
+        "exclude": [],
+    },
+    "Model": {
+        "include": ["model", "model no", "model number", "type designation",
+                    "designation", "type", "typ", "bezeichnung", "serie", "series",
+                    "reference"],
+        "exclude": ["protection", "construction", "cooling", "enclosure", "frame",
+                    "bearing", "connection", "mounting", "insulation"],
+    },
     "In [A]":  {"include": ["current", "amp", "ampere", "strom"],
                 "exclude": ["start", "inrush", "locked", "no-load", "no load"]},
     "Un [kV]": {"include": ["voltage", "volt", "spannung"],
@@ -31,8 +53,13 @@ FIELD_MATCHERS: dict[str, dict[str, list[str]]] = {
     "n [rpm]": {"include": ["speed", "rpm", "revolut", "drehzahl"],
                 "exclude": []},
 }
-# Export column order (Filename and Uploaded At are prepended at build time).
-EXPORT_FIELDS: list[str] = list(FIELD_MATCHERS)
+
+# Final export column order. "ID" is the DB record id; "Filename"/"Uploaded At"
+# are record metadata; the rest are matched from the nameplate image.
+EXPORT_COLUMNS: list[str] = [
+    "ID", "Serial No", "Brand", "Model", "Filename", "Uploaded At",
+    "In [A]", "Un [kV]", "ηn [%]", "cosφn", "n [rpm]",
+]
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -48,32 +75,36 @@ def _parse_ids(ids_str: Optional[str]) -> list[int] | None:
 
 def _best_value(attr_map: dict[str, str], include: list[str], exclude: list[str]) -> str:
     """
-    Pick the attribute value whose name best matches the *include* keywords.
-    Returns "" when no attribute on the nameplate matches this field.
+    Pick the attribute whose name best matches the *include* keywords.
+    `include` is priority-ordered: the candidate matching the earliest keyword
+    wins (so "Serial Number" beats "Article No"). Ties are broken by number of
+    matched keywords. Returns "" when no attribute matches this field.
     """
-    best_score = 0
     best_value = ""
-    for name, value in attr_map.items():
+    best_key: tuple[int, int] | None = None
+    for name in sorted(attr_map):
         low = name.lower()
         if any(ex in low for ex in exclude):
             continue
-        score = sum(1 for kw in include if kw in low)
-        if score > best_score:
-            best_score = score
-            best_value = value
+        matched = [i for i, kw in enumerate(include) if kw in low]
+        if not matched:
+            continue
+        # (earliest keyword index, −match count): smaller is better
+        key = (matched[0], -len(matched))
+        if best_key is None or key < best_key:
+            best_key = key
+            best_value = attr_map[name]
     return best_value
 
 
 def _build_dataframe(db: Session, ids: list[int] | None) -> pd.DataFrame:
-    columns = ["Filename", "Uploaded At", *EXPORT_FIELDS]
-
     query = db.query(Nameplate)
     if ids:
         query = query.filter(Nameplate.id.in_(ids))
     records = query.order_by(Nameplate.id).all()
 
     if not records:
-        return pd.DataFrame(columns=columns)
+        return pd.DataFrame(columns=EXPORT_COLUMNS)
 
     record_ids = [rec.id for rec in records]
     attrs = (
@@ -90,6 +121,7 @@ def _build_dataframe(db: Session, ids: list[int] | None) -> pd.DataFrame:
     for rec in records:
         amap = attr_map[rec.id]
         row: dict = {
+            "ID": rec.id,
             "Filename": rec.filename,
             "Uploaded At": rec.uploaded_at,
         }
@@ -97,7 +129,7 @@ def _build_dataframe(db: Session, ids: list[int] | None) -> pd.DataFrame:
             row[field] = _best_value(amap, matcher["include"], matcher["exclude"])
         rows.append(row)
 
-    return pd.DataFrame(rows, columns=columns)
+    return pd.DataFrame(rows, columns=EXPORT_COLUMNS)
 
 
 # ── CSV ────────────────────────────────────────────────────────────────────────
