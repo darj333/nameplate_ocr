@@ -285,9 +285,21 @@ function showPreviewImage() {
   previewFallback.classList.add("hidden");
 }
 function showPreviewFallback() {
+  console.warn("[preview] image failed to load:", previewImg.src);
   previewBox.classList.remove("hidden");
   previewImg.classList.add("hidden");
   previewFallback.classList.remove("hidden");
+}
+function loadPreview(url) {
+  // Reopening the same record sets src to the value it already holds, so the
+  // browser doesn't fire `load` again — reveal the already-loaded image
+  // directly. For a new URL, set src and let the load/error handlers react.
+  if (previewImg.getAttribute("src") === url) {
+    if (previewImg.complete && previewImg.naturalWidth > 0) showPreviewImage();
+    else showPreviewFallback();
+  } else {
+    previewImg.src = url;
+  }
 }
 previewImg.addEventListener("load", showPreviewImage);
 previewImg.addEventListener("error", showPreviewFallback);
@@ -330,7 +342,7 @@ function renderDetailPanel(np) {
   document.getElementById("detail-title").textContent = `Nameplate #${np.id}`;
   document.getElementById("detail-filename").textContent = np.filename;
   document.getElementById("detail-uploaded").textContent = fmtDate(np.uploaded_at);
-  previewImg.src = `/nameplates/${np.id}/image`;
+  loadPreview(`/nameplates/${np.id}/image`);
   document.getElementById("detail-status-bar").innerHTML = `Status: ${statusBadge(np.status)}` +
     (np.error_message ? `<br><span style="color:var(--danger);font-size:.8rem">${escHtml(np.error_message)}</span>` : "");
   document.getElementById("raw-ocr-pre").textContent = np.ocr_raw_text || "(none)";
