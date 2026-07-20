@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Integer, String, Text, Float, ForeignKey, DateTime
+from sqlalchemy import Integer, String, Text, Float, ForeignKey, DateTime, LargeBinary
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -10,6 +10,10 @@ class Nameplate(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     filename: Mapped[str] = mapped_column(String, nullable=False)
     file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    # Stored image bytes + MIME — the DB is the source of truth so previews
+    # (and reprocessing) survive ephemeral filesystems (e.g. Railway redeploys).
+    image_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    image_mime: Mapped[str | None] = mapped_column(String(40), nullable=True)
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

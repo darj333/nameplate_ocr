@@ -7,7 +7,7 @@ from pathlib import Path
 
 import aiofiles
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -70,8 +70,13 @@ async def upload_nameplate(
     async with aiofiles.open(dest, "wb") as f:
         await f.write(contents)
 
-    # DB record
-    nameplate = Nameplate(filename=file.filename or safe_name, file_path=str(dest))
+    # DB record (DB is the source of truth for the image so it survives redeploys)
+    nameplate = Nameplate(
+        filename=file.filename or safe_name,
+        file_path=str(dest),
+        image_data=contents,
+        image_mime=file.content_type,
+    )
     db.add(nameplate)
     db.commit()
     db.refresh(nameplate)
@@ -124,10 +129,16 @@ def get_nameplate(nameplate_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{nameplate_id}/image")
 def get_nameplate_image(nameplate_id: int, db: Session = Depends(get_db)):
-    """Stream the originally uploaded image file for preview."""
+    """Return the originally uploaded image for preview. DB is the source of
+    truth; the on-disk file_path is only a fallback for legacy rows."""
     nameplate = db.get(Nameplate, nameplate_id)
     if nameplate is None:
         raise HTTPException(status_code=404, detail="Nameplate not found")
+    if nameplate.image_data:
+        return Response(
+            content=nameplate.image_data,
+            media_type=nameplate.image_mime or "application/octet-stream",
+        )
     path = Path(nameplate.file_path)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Image file not found on disk")

@@ -6,7 +6,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from app.models.nameplate import Nameplate, NameplateAttribute
-from app.services.llm import structure_with_llm
+from app.services.llm import structure_with_llm, structure_with_llm_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,12 @@ def _save_attributes(
 
 def _process_image(nameplate: Nameplate, db: Session) -> None:
     logger.info("[%d] Sending image to vision LLM: %s", nameplate.id, nameplate.file_path)
-    pairs, raw = structure_with_llm(nameplate.file_path)
+    # Prefer the stored bytes (DB is source of truth); fall back to disk for
+    # legacy rows that predate image_data.
+    if nameplate.image_data:
+        pairs, raw = structure_with_llm_bytes(nameplate.image_data, nameplate.image_mime)
+    else:
+        pairs, raw = structure_with_llm(nameplate.file_path)
     logger.info("[%d] LLM returned %d attribute pairs", nameplate.id, len(pairs))
     _save_attributes(nameplate, pairs, raw, db)
 

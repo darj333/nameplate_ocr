@@ -55,13 +55,17 @@ def _image_to_data_url(image_path: str | Path) -> str:
 
 def _extract_json(raw: str) -> dict:
     """
-    Robustly extract a JSON object from a model response that may be wrapped
-    in markdown code fences or contain extra commentary.
+    Robustly extract a JSON object from a model response.
 
-    1. Strip ``` fences if present.
-    2. Fall back to extracting the outermost { … } block.
+    Handles: <think> reasoning blocks (complete or truncated), markdown code
+    fences, and extra commentary. Falls back to the outermost { … } block.
     """
-    clean = re.sub(r"^```(?:json)?\s*\n?", "", raw.strip(), flags=re.IGNORECASE)
+    clean = raw.strip()
+    # Drop reasoning emitted by "thinking" models (complete then truncated).
+    clean = re.sub(r"<think>.*?</think>\s*", "", clean, flags=re.DOTALL | re.IGNORECASE)
+    clean = re.sub(r"<think>.*", "", clean, flags=re.DOTALL | re.IGNORECASE)
+    # Strip ``` fences if present.
+    clean = re.sub(r"^```(?:json)?\s*\n?", "", clean, flags=re.IGNORECASE)
     clean = re.sub(r"\n?```\s*$", "", clean).strip()
 
     try:
@@ -69,11 +73,11 @@ def _extract_json(raw: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    start = raw.find("{")
-    end = raw.rfind("}")
+    start = clean.find("{")
+    end = clean.rfind("}")
     if start != -1 and end != -1 and end > start:
         try:
-            return json.loads(raw[start : end + 1])
+            return json.loads(clean[start : end + 1])
         except json.JSONDecodeError:
             pass
 
@@ -91,7 +95,7 @@ def _vision_completion(data_url: str, prompt: str, max_tokens: int = 4096) -> st
     """Call the Groq vision model with a given image data-URL and prompt."""
     client = _groq_client()
     settings = get_settings()
-    completion = client.chat.completions.create(
+    common_kwargs = dict(
         model=settings.groq_vision_model,
         messages=[
             {
@@ -105,6 +109,20 @@ def _vision_completion(data_url: str, prompt: str, max_tokens: int = 4096) -> st
         temperature=0.1,
         max_tokens=max_tokens,
     )
+    try:
+        # JSON mode keeps the (thinking) model's output a clean JSON object.
+        completion = client.chat.completions.create(
+            response_format={"type": "json_object"}, **common_kwargs
+        )
+    except Exception as exc:
+        # Groq rejects outputs it can't validate as JSON (json_validate_failed),
+        # which happens on some images. Fall back to unconstrained output and
+        # let _extract_json handle fences / <think> blocks / commentary.
+        if "json_validate_failed" in str(exc) or "Failed to validate JSON" in str(exc):
+            logger.warning("JSON mode rejected the response; retrying without it.")
+            completion = client.chat.completions.create(**common_kwargs)
+        else:
+            raise
     raw = completion.choices[0].message.content.strip()
     logger.debug("Vision LLM raw response: %s", raw)
     return raw
@@ -112,12 +130,8 @@ def _vision_completion(data_url: str, prompt: str, max_tokens: int = 4096) -> st
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-def structure_with_llm(image_path: str | Path) -> tuple[list[dict[str, str]], str]:
-    """
-    Send an image file to the Groq vision model using the nameplate prompt.
-    Returns (attributes, raw_text).
-    """
-    data_url = _image_to_data_url(image_path)
+def _structure_from_data_url(data_url: str) -> tuple[list[dict[str, str]], str]:
+    """Call the vision model with a ready data-URL; parse + clean the response."""
     raw = _vision_completion(data_url, _NAMEPLATE_PROMPT)
     data = _extract_json(raw)
 
@@ -131,3 +145,18 @@ def structure_with_llm(image_path: str | Path) -> tuple[list[dict[str, str]], st
         if str(item.get("name", "")).strip() and str(item.get("value", "")).strip()
     ]
     return cleaned, raw
+
+
+def structure_with_llm(image_path: str | Path) -> tuple[list[dict[str, str]], str]:
+    """
+    Send an image file to the Groq vision model using the nameplate prompt.
+    Returns (attributes, raw_text).
+    """
+    return _structure_from_data_url(_image_to_data_url(image_path))
+
+
+def structure_with_llm_bytes(
+    image_bytes: bytes, mime: str | None
+) -> tuple[list[dict[str, str]], str]:
+    """Like structure_with_llm, but takes raw image bytes (e.g. stored in the DB)."""
+    return _structure_from_data_url(_bytes_to_data_url(image_bytes, mime or "image/jpeg"))
